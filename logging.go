@@ -3,10 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"time"
 )
-
-var ErrorChannelListeningTimeout = 4 * time.Second
 
 func log(msg string) {
 	// logging
@@ -26,8 +23,6 @@ func ListenErrorChannel(ctx context.Context, errorChannel chan error) {
 				return
 			case err := <-errorChannel:
 				log(err.Error())
-			default:
-				time.Sleep(1 * time.Millisecond)
 			}
 		}
 	}()

@@ -49,10 +49,6 @@ func main() {
 	ListenResultChannel(ctx, workerPool.SubscribeResults())
 	ListenErrorChannel(ctx, workerPool.SubscribeErrors())
 
-	time.Sleep(10 * time.Second)
-
-	workerPool.RemoveWorkers(2)
-
 	<-ctx.Done()
 
 	fmt.Println("Got signal to turn worker pool off")

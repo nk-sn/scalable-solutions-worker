@@ -1,17 +1,12 @@
 package main
 
 import (
-	"github.com/pkg/errors"
-
 	"context"
 	"fmt"
-	"math/rand"
 	"time"
 )
 
 var ChannelsCloseTimeout = 5 * time.Second
-
-var ErrNoJobs = errors.New("worker pool: there are no jobs")
 
 type Worker interface {
 	Run()
@@ -24,6 +19,7 @@ type WorkerPool struct {
 	workersRunning []Worker
 	workersQueue   []Worker
 	jobs           []Job
+	jobsChannel    chan Job
 	resultChannel  chan JobResult
 	errorChannel   chan error
 }
@@ -34,6 +30,7 @@ func NewWorkerPool(cxt context.Context) *WorkerPool {
 	return &WorkerPool{
 		cxt:           workerPoolContext,
 		cancel:        cancel,
+		jobsChannel:   make(chan Job),
 		resultChannel: make(chan JobResult),
 		errorChannel:  make(chan error),
 	}
@@ -42,13 +39,14 @@ func NewWorkerPool(cxt context.Context) *WorkerPool {
 func (wp *WorkerPool) Start() {
 	fmt.Println("Worker Pool turned on")
 	go func() {
-		ticker := time.NewTicker(1 * time.Millisecond)
-		defer ticker.Stop()
 		for {
 			select {
 			case <-wp.cxt.Done():
-				// waiting to graceful close channel
+				// waiting to graceful close channels
 				time.Sleep(ChannelsCloseTimeout)
+
+				close(wp.jobsChannel)
+				fmt.Println("Worker Pool jobs channel is closed")
 				close(wp.resultChannel)
 				fmt.Println("Worker Pool result channel is closed")
 				close(wp.errorChannel)
@@ -56,7 +54,7 @@ func (wp *WorkerPool) Start() {
 
 				fmt.Println("Worker Pool turned off")
 				return
-			case <-ticker.C:
+			default:
 				if len(wp.workersQueue) != 0 {
 					for _, w := range wp.workersQueue {
 						w.Run()
@@ -64,6 +62,7 @@ func (wp *WorkerPool) Start() {
 					}
 					wp.workersQueue = make([]Worker, 0)
 				}
+				time.Sleep(1 * time.Millisecond)
 			}
 		}
 	}()
@@ -74,16 +73,8 @@ func (wp *WorkerPool) Shutdown() {
 }
 
 func (wp *WorkerPool) AddWorkers(count uint8) {
-	if len(wp.jobs) == 0 {
-		wp.errorChannel <- ErrNoJobs
-		fmt.Println("No jobs in Worker Pool")
-		return
-	}
 	for i := uint8(0); i < count; i++ {
-		// Так как не сказано в задаче как распределять задачи, распределяем случайно
-		rand.Seed(time.Now().UnixNano())
-		job := wp.jobs[rand.Intn(len(wp.jobs))]
-		worker := NewWork(wp.cxt, job, wp.errorChannel, wp.resultChannel)
+		worker := NewWork(wp.cxt, wp.jobsChannel, wp.errorChannel, wp.resultChannel)
 		wp.workersQueue = append(wp.workersQueue, worker)
 	}
 	fmt.Println(fmt.Sprintf("Added %d workers to worker pool", count))
@@ -103,6 +94,16 @@ func (wp *WorkerPool) RemoveWorkers(count uint8) {
 
 func (wp *WorkerPool) AddJob(job Job) {
 	wp.jobs = append(wp.jobs, job)
+	go func() {
+		for {
+			select {
+			case <-wp.cxt.Done():
+				return
+			default:
+				wp.jobsChannel <- job
+			}
+		}
+	}()
 	fmt.Println(fmt.Sprintf("Job %s added to worker pool", job.ID()))
 }
 
